@@ -356,7 +356,23 @@ public class OperationValidator implements DocumentVisitor {
     private int fragmentTraversalMaxDepth = 0;
 
     // --- State: Good Faith Introspection ---
+    // These caches are scoped to one operation and are null when Good Faith counting is inactive.
+    // All FieldAndType entries in a key set have the same response name
+    // (the alias if present, otherwise the field name).
+    // FieldAndType is identified only by the AST node.
+
+    // Caches merged child selections, grouped by response name, for each set of collected fields.
+    // Shares field-collection work between merge-validation traversals.
+    // Example: `fields { a: name } fields { b: name }` uses the two `fields` AST nodes as the key
+    // and caches their combined children under response names `a` and `b`, both selecting `name`.
     private @Nullable Map<Set<FieldAndType>, Map<String, Set<FieldAndType>>> mergedIntrospectionSelections;
+
+    // Caches field count, relative depth and restricted coordinates for each common-parent validation set.
+    // These are sets of fields checked together for matching field names and arguments.
+    // Example: `fields { name } fields { description }` on __Type caches a count of 3 fields,
+    // a relative depth of 2, and one occurrence of the restricted coordinate __Type.fields.
+    // Cached summaries contribute again at each response position where the set occurs.
+    // A present key with a null value marks counting in progress, preventing recursion through fragment cycles.
     private @Nullable Map<Set<FieldAndType>, @Nullable GoodFaithIntrospectionCounts> introspectionCounts;
     private boolean introspectionQueryDetected = false;
 
