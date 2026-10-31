@@ -38,7 +38,6 @@ public class GoodFaithValidationBenchmark {
     private GraphQLSchema schema;
     private Document document;
 
-    // Builds and parses a valid query before timing, isolating validation from schema creation and parsing.
     @Setup
     public void setup() {
         schema = SchemaGenerator.createdMockedSchema("type Query { node: Node } type Node { name: String child: Node }");
@@ -60,7 +59,6 @@ public class GoodFaithValidationBenchmark {
         assertTrue(validate().isEmpty());
     }
 
-    // Measures a fresh validation of the prepared document, including operation-scoped counting when applicable.
     @Benchmark
     public List<ValidationError> validate() {
         return new Validator().validateDocument(schema, document, Locale.ENGLISH);

@@ -19,7 +19,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         type Node { name: String child: Node }
     ''')
 
-    // Repeated fields and fragment spreads can produce many AST occurrences but a single merged field group.
     def "mergeable selections count once at the same response position"() {
         expect:
         validate(query).empty
@@ -40,7 +39,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         ]
     }
 
-    // Reusing a fragment under separate aliases must contribute its restricted coordinates at each position.
     def "cached fragments count again at distinct response positions for #field"() {
         when:
         validate("""{ __schema { a: types { ...F } b: types { ...F } } }
@@ -59,7 +57,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         'possibleTypes' | 'name'
     }
 
-    // Root restrictions use the schema's actual query type and apply to aliased fields reached through fragments.
     def "root introspection aliases inside fragments are limited on custom roots"() {
         given:
         def customSchema = TestUtil.schema('schema { query: Root } type Root { name: String }')
@@ -80,7 +77,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         '__type(name: "Root")' | '__type'   | 'name'
     }
 
-    // Introspection detection and merging work through inline, chained and shared root fragments.
     def "root #rootField through #placement merges valid selections"() {
         given:
         def query = rootFragments(rootIntrospection(rootField, 'fields { name }'), placement)
@@ -92,7 +88,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         [rootField, placement] << [['__schema', '__type'], ['inline', 'named chain', 'shared fragments']].combinations()
     }
 
-    // Each fragment shape must activate size, depth and coordinate limits for either introspection entry point.
     def "root #rootField through #placement enforces #protection"() {
         given:
         def query = rootFragments(rootIntrospectionViolation(rootField, protection), placement)
@@ -114,7 +109,6 @@ class GoodFaithMergedFieldsTest extends Specification {
                           'restricted field': '__Type.fields', 'root aliases': "Query.$rootField"][protection]
     }
 
-    // Counting the same fragment at both aliases produces 499 or 501 fields, crossing the operation limit.
     def "merged field limit includes each reuse of a cached subtree"() {
         given:
         // __schema, two types fields, and 248 or 249 leaves at each response position.
@@ -131,7 +125,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         249    | true
     }
 
-    // The limits include exactly 500 fields and depth 20; a cached subtree also needs checking at a deeper position.
     def "merged field and depth limits include their boundary"() {
         expect:
         rejected(query) == expected
@@ -146,7 +139,6 @@ class GoodFaithMergedFieldsTest extends Specification {
            fragment F on __Type { ''' + 'ofType { ' * 17 + 'name' + ' }' * 17 + ' }'                          | true
     }
 
-    // Literal and variable directives on fields or spreads cannot hide selections from structural counting.
     def "directives are conservatively included without coercing variables"() {
         expect:
         rejected(query)
@@ -162,7 +154,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         ]
     }
 
-    // Disabling conflict reporting still requires merging for Good Faith's occurrence counts.
     def "good faith runs independently of the overlapping fields rule"() {
         given:
         def predicate = { OperationValidationRule rule -> rule != OperationValidationRule.OVERLAPPING_FIELDS_CAN_BE_MERGED }
@@ -177,14 +168,12 @@ class GoodFaithMergedFieldsTest extends Specification {
         new Validator().validateDocument(schema, Parser.parse('{ __schema { types { fields { name } fields { description } } } }'), predicate, Locale.ENGLISH).empty
     }
 
-    // Disabling Good Faith allows repeated restricted coordinates while keeping ordinary validation enabled.
     def "good faith can be disabled through its validation rule"() {
         expect:
         new Validator().validateDocument(schema, Parser.parse('{ __schema { a: types { fields { name } } b: types { fields { name } } } }'),
                 { rule -> rule != OperationValidationRule.GOOD_FAITH_INTROSPECTION }, Locale.ENGLISH).empty
     }
 
-    // Operation-scoped depth limits must not affect a neighboring ordinary operation; __typename does not activate them.
     def "normal operations retain their limits in either document order"() {
         given:
         def normal = 'query Normal { __typename node { ' + 'child { ' * 22 + 'name' + ' }' * 22 + ' } }'
@@ -196,20 +185,17 @@ class GoodFaithMergedFieldsTest extends Specification {
         validate(normal + introspection).empty
     }
 
-    // An ordinary operation can exceed the Good Faith budget while remaining within the generic AST budget.
     def "ordinary operations are not subject to the 500 field limit"() {
         expect:
         validate('{ __typename ' + (1..501).collect { "n$it: normalField" }.join(' ') + ' }').empty
     }
 
-    // Once root introspection activates Good Faith, both budgets cover the operation's application selections too.
     def "business selections in a mixed operation count toward good faith limits"() {
         expect:
         rejected('{ __schema { queryType { name } } ' + (1..498).collect { "n$it: normalField" }.join(' ') + ' }')
         rejected('{ __type(name: "Query") { name } node { ' + 'child { ' * 20 + 'name' + ' }' * 20 + ' } }')
     }
 
-    // Mergeable duplicates still consume AST traversal work and must respect the caller's separate AST budget.
     def "generic AST work limits remain independent of merged field limits"() {
         given:
         def graphQL = GraphQL.newGraphQL(schema).build()
@@ -221,7 +207,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         graphQL.execute(input).errors[0] instanceof GoodFaithIntrospection.BadFaithIntrospectionError
     }
 
-    // Good Faith's depth allowance cannot relax a stricter caller-specified traversal limit.
     def "a tighter generic depth limit still applies to introspection"() {
         given:
         def graphQL = GraphQL.newGraphQL(schema).build()
@@ -233,7 +218,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         graphQL.execute(input).errors[0].message.contains('maximum allowed depth 2')
     }
 
-    // A mixed operation can select the same root field through both its object type and an implemented interface.
     def "root interface selections merge with concrete root selections"() {
         given:
         def interfaceRoot = TestUtil.schema('interface Named { name: String } type Query implements Named { name: String }')
@@ -243,7 +227,6 @@ class GoodFaithMergedFieldsTest extends Specification {
                 Parser.parse('{ __schema { queryType { name } } name ...on Named { name } }'), Locale.ENGLISH).empty
     }
 
-    // Shared collection and counting must tolerate invalid documents long enough for validation to diagnose them.
     def "invalid selections and fragment cycles remain validation errors"() {
         expect:
         !validate(query).empty
@@ -259,7 +242,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         ]
     }
 
-    // Exercises interface, union and covariant-return grouping by padding each expected count to the 500-field boundary.
     def "mixed abstract selections use validation groups at the limit"() {
         given:
         def abstractSchema = TestUtil.schema('''
@@ -299,7 +281,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         'node { ...F } alias: node { ...F }'                                              | 'fragment F on I { name }'      | 6                | 6
     }
 
-    // Document-wide validation memoization must not suppress per-operation counts for shared fragment fields.
     def "Good Faith counts fragments already checked by another operation"() {
         given:
         def names = (1..leaves).collect { "n$it: name" }.join(' ')
@@ -319,7 +300,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         249    | false       | true
     }
 
-    // Resolving introspection meta-field types allows nested output-shape and field-name conflicts to be diagnosed.
     def "introspection subfields still undergo overlap validation"() {
         expect:
         validate(query).any { it.validationErrorType == ValidationErrorType.FieldsConflict }
@@ -331,7 +311,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         ]
     }
 
-    // Introspection extensions can replace schema type instances without changing their restricted field coordinates.
     def "custom introspection types retain restricted field limits"() {
         given:
         def extendedSchema = new IntrospectionWithDirectivesSupport().apply(schema)
@@ -345,7 +324,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         error.toBadFaithError().message.contains('__Type.fields')
     }
 
-    // Combining caller limits with Good Faith bounds chooses each minimum without modifying the supplied limits.
     def "public limit helper preserves tighter caller limits"() {
         given:
         def requested = QueryComplexityLimits.newLimits().maxFieldsCount(fields).maxDepth(depth).build()
@@ -367,7 +345,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         50     | 100   | 50             | 20
     }
 
-    // Places a __Type selection under either introspection root, with an optional alias for occurrence-limit cases.
     private String rootIntrospection(String rootField, String selection, String alias = '') {
         if (rootField == '__schema') {
             return "${alias}__schema { types { $selection } }"
@@ -375,7 +352,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         return "${alias}__type(name: \"Query\") { $selection }"
     }
 
-    // Wraps the same root selections in fragment shapes that exercise expansion, chaining and shared spreads.
     private String rootFragments(String selection, String placement) {
         switch (placement) {
             case 'inline':
@@ -394,7 +370,6 @@ class GoodFaithMergedFieldsTest extends Specification {
         }
     }
 
-    // Builds an over-budget selection or a repeated restricted field, accounting for the root's contribution to size and depth.
     private String rootIntrospectionViolation(String rootField, String protection) {
         int rootDepth = rootField == '__schema' ? 2 : 1
         switch (protection) {
@@ -412,12 +387,10 @@ class GoodFaithMergedFieldsTest extends Specification {
         }
     }
 
-    // Validates directly so structural checks run without executing the query or coercing runtime variables.
     private List validate(String query) {
         new Validator().validateDocument(schema, Parser.parse(query), Locale.ENGLISH)
     }
 
-    // Recognizes a Good Faith limit rejection; unrelated failures remain visible to the test.
     private boolean rejected(String query) {
         try {
             validate(query)

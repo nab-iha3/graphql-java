@@ -43,7 +43,6 @@ class GoodFaithIntrospectionTest extends Specification {
         er.errors.isEmpty()
     }
 
-    // Repeated introspection entry points and schema-expanding coordinates must surface as Good Faith execution errors.
     def "test asking for introspection in bad faith"() {
 
         when:

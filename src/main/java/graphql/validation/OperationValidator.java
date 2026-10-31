@@ -841,7 +841,6 @@ public class OperationValidator implements DocumentVisitor {
         }
     }
 
-    // Runs document-scoped field rules, skipping operation-specific fragment revisits.
     private void checkField(Field field) {
         if (shouldRunDocumentLevelRules()) {
             if (isRuleEnabled(OperationValidationRule.FIELDS_ON_CORRECT_TYPE)) {
@@ -987,8 +986,6 @@ public class OperationValidator implements DocumentVisitor {
         }
     }
 
-    // Runs operation-level rules and initializes their tracking state. The shared field traversal is
-    // needed when either merge validation or Good Faith is enabled, independently of the other rule.
     private void checkOperationDefinition(OperationDefinition operationDefinition) {
         currentOperation = operationDefinition;
 
@@ -1061,8 +1058,6 @@ public class OperationValidator implements DocumentVisitor {
         }
     }
 
-    // Reports unused variables and clears operation-scoped state. Good Faith summaries belong to
-    // one operation even when field groups have already been validated elsewhere in the document.
     private void leaveOperationDefinition() {
         // fragments should be revisited for each operation
         visitedFragmentSpreads.clear();
@@ -1408,8 +1403,6 @@ public class OperationValidator implements DocumentVisitor {
     }
 
     // --- Good Faith Introspection ---
-    // Detects introspection at the query root using the collected fields, which already include
-    // named and inline fragments, so activation needs no separate document traversal.
     private boolean containsIntrospection(Map<String, Set<FieldAndType>> fields, @Nullable GraphQLType rootType) {
         if (rootType != validationContext.getSchema().getQueryType()) {
             return false;
@@ -1422,8 +1415,6 @@ public class OperationValidator implements DocumentVisitor {
         return false;
     }
 
-    // Uses field names rather than aliases to recognize the two introspection entry points.
-    // __typename alone does not activate Good Faith limits.
     private boolean containsIntrospectionField(Set<FieldAndType> fields) {
         for (FieldAndType field : fields) {
             String name = field.field.getName();
@@ -1434,10 +1425,6 @@ public class OperationValidator implements DocumentVisitor {
         return false;
     }
 
-    // Returns an alias-independent Type.field key for fields limited to one merged occurrence per operation.
-    // Root entry points and the four __Type list fields can repeatedly expand the schema graph.
-    // Checking the parent type excludes application fields with the same names. A null result leaves
-    // the field subject to the overall field and depth limits without a coordinate-specific cap.
     private @Nullable String introspectionCoordinate(FieldAndType field) {
         String name = field.field.getName();
         if (field.parentType == validationContext.getSchema().getQueryType()
@@ -1453,15 +1440,12 @@ public class OperationValidator implements DocumentVisitor {
     }
 
     // --- OverlappingFieldsCanBeMerged ---
-    // Starts the shared merge-validation and Good Faith traversal with the operation's schema root type.
     private void validateOverlappingFieldsCanBeMerged(OperationDefinition operationDefinition) {
         overlappingFieldsImpl(
                 operationDefinition.getSelectionSet(),
                 getOperationType(operationDefinition));
     }
 
-    // Collects root selections and allocates counting caches only when Good Faith applies to the operation.
-    // Runs the enabled checks and reports each conflicting field set once across the document.
     private void overlappingFieldsImpl(SelectionSet selectionSet, @Nullable GraphQLOutputType graphQLOutputType) {
         Map<String, Set<FieldAndType>> fieldMap = new LinkedHashMap<>(selectionSet.getSelections().size());
         Set<String> visitedFragments = new LinkedHashSet<>();
@@ -1516,8 +1500,6 @@ public class OperationValidator implements DocumentVisitor {
         overlappingFields_collectFields(fieldMap, inlineFragment.getSelectionSet(), graphQLType, visitedFragments);
     }
 
-    // Groups fields by response name while retaining their parent and output types. The shared field
-    // lookup resolves introspection meta-fields too, so their children are collected with the correct type.
     private void overlappingFields_collectFieldsForField(Map<String, Set<FieldAndType>> fieldMap, @Nullable GraphQLType parentType, Field field) {
         String responseName = field.getResultKey();
         GraphQLOutputType fieldType = null;
@@ -1529,8 +1511,6 @@ public class OperationValidator implements DocumentVisitor {
         fieldMap.computeIfAbsent(responseName, k -> new LinkedHashSet<>()).add(new FieldAndType(field, fieldType, unwrappedParent));
     }
 
-    // Runs merge checks and Good Faith counting according to their independent rule settings.
-    // Introspection uses the common-parent walk first so its limits bound work before the shape walk.
     private List<Conflict> findConflicts(Map<String, Set<FieldAndType>> fieldMap) {
         List<Conflict> result = new ArrayList<>();
         boolean checkMerging = isRuleEnabled(OperationValidationRule.OVERLAPPING_FIELDS_CAN_BE_MERGED);
@@ -1540,6 +1520,7 @@ public class OperationValidator implements DocumentVisitor {
         if (checkMerging || introspectionQueryDetected) {
             sameForCommonParentsByName(fieldMap, emptyList(), result);
         }
+        // Enforce Good Faith limits in the common-parent walk before the other recursive merge checks.
         if (checkMerging && introspectionQueryDetected) {
             sameResponseShapeByName(fieldMap, emptyList(), result);
         }
@@ -1563,8 +1544,6 @@ public class OperationValidator implements DocumentVisitor {
         }
     }
 
-    // Shares collected child selections between the recursive checks when Good Faith is active.
-    // Ordinary operations collect directly without allocating a subtree cache.
     private Map<String, Set<FieldAndType>> mergeSubSelections(Set<FieldAndType> sameNameFields) {
         if (mergedIntrospectionSelections == null) {
             return collectSubSelections(sameNameFields);
@@ -1572,8 +1551,6 @@ public class OperationValidator implements DocumentVisitor {
         return mergedIntrospectionSelections.computeIfAbsent(sameNameFields, this::collectSubSelections);
     }
 
-    // Combines a group's child selections by response name, expanding their fragments. Each field's
-    // selection set gets its own visited-fragment set so all contributing selections are collected.
     private Map<String, Set<FieldAndType>> collectSubSelections(Set<FieldAndType> sameNameFields) {
         Map<String, Set<FieldAndType>> fieldMap = new LinkedHashMap<>();
         for (FieldAndType fieldAndType : sameNameFields) {
@@ -1585,9 +1562,6 @@ public class OperationValidator implements DocumentVisitor {
         return fieldMap;
     }
 
-    // Visits the common-parent groups for each response name and checks their merged subtrees.
-    // When Good Faith is active, returns their combined field count, depth and restricted coordinates;
-    // otherwise returns null and allocates no counting summaries.
     private @Nullable GoodFaithIntrospectionCounts sameForCommonParentsByName(Map<String, Set<FieldAndType>> fieldMap,
                                                                               ImmutableList<String> currentPath, List<Conflict> conflictsResult) {
         GoodFaithIntrospectionCounts counts = introspectionCounts == null ? null : new GoodFaithIntrospectionCounts();
@@ -1601,9 +1575,6 @@ public class OperationValidator implements DocumentVisitor {
         return counts;
     }
 
-    // Validates a group's name and arguments once, but counts its subtree at every response position.
-    // A group validated in another operation still needs a summary for this operation. Counting also
-    // runs when the merge rule is disabled. The path includes this field, so its parent depth is size - 1.
     private void sameForCommonParentGroup(Set<FieldAndType> group, ImmutableList<String> path, List<Conflict> conflictsResult,
                                           @Nullable GoodFaithIntrospectionCounts selectionCounts) {
         if (selectionCounts != null && reuseIntrospectionCounts(group, path.size() - 1, selectionCounts)) {
@@ -1636,9 +1607,6 @@ public class OperationValidator implements DocumentVisitor {
         }
     }
 
-    // Adds a cached summary at this occurrence and rechecks its depth relative to the current parent.
-    // Returns false only when the group needs counting. An entry with a null value is in progress:
-    // stop that recursive expansion and let fragment-cycle validation diagnose the invalid document.
     private boolean reuseIntrospectionCounts(Set<FieldAndType> group, int parentDepth, GoodFaithIntrospectionCounts selectionCounts) {
         Map<Set<FieldAndType>, @Nullable GoodFaithIntrospectionCounts> cache = Assert.assertNotNull(introspectionCounts);
         if (!cache.containsKey(group)) {
