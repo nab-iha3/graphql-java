@@ -325,8 +325,6 @@ public class OperationValidator implements DocumentVisitor {
     private @Nullable Map<String, VariableDefinition> variableDefinitionMap;
 
     // --- State: OverlappingFieldsCanBeMerged ---
-    private final Set<Set<FieldAndType>> sameResponseShapeChecked = new LinkedHashSet<>();
-    private final Set<Set<FieldAndType>> sameForCommonParentsChecked = new LinkedHashSet<>();
     private final Set<Set<Field>> conflictsReported = new LinkedHashSet<>();
 
     // --- State: LoneAnonymousOperation ---
@@ -355,17 +353,17 @@ public class OperationValidator implements DocumentVisitor {
     // Max depth seen during current fragment traversal (for calculating fragment's internal depth)
     private int fragmentTraversalMaxDepth = 0;
 
-    // --- State: Good Faith Introspection ---
-    // These caches are scoped to one operation and are null when Good Faith counting is inactive.
+    // --- State: Merged selections and Good Faith Introspection ---
+    // Caches merge-check progress and merged child selections for the whole document.
     // All FieldAndType entries in a key set have the same response name
     // (the alias if present, otherwise the field name).
     // FieldAndType is identified only by the AST node.
-
-    // Caches merged child selections, grouped by response name, for each set of collected fields.
-    // Shares field-collection work between merge-validation traversals.
+    // Child selections depend on the document and schema, not the current operation.
+    // They are grouped by response name and shared between merge-validation traversals.
+    // Leaf-only sets share an empty map.
     // Example: `fields { a: name } fields { b: name }` uses the two `fields` AST nodes as the key
     // and caches their combined children under response names `a` and `b`, both selecting `name`.
-    private @Nullable Map<Set<FieldAndType>, Map<String, Set<FieldAndType>>> mergedIntrospectionSelections;
+    private final Map<Set<FieldAndType>, FieldValidationState<FieldAndType>> fieldValidationStates = new HashMap<>();
 
     // Caches field count, relative depth and restricted coordinates for each common-parent validation set.
     // These are sets of fields checked together for matching field names and arguments.
@@ -373,6 +371,7 @@ public class OperationValidator implements DocumentVisitor {
     // a relative depth of 2, and one occurrence of the restricted coordinate __Type.fields.
     // Cached summaries contribute again at each response position where the set occurs.
     // A present key with a null value marks counting in progress, preventing recursion through fragment cycles.
+    // This cache is scoped to one operation and is null when Good Faith counting is inactive.
     private @Nullable Map<Set<FieldAndType>, @Nullable GoodFaithIntrospectionCounts> introspectionCounts;
     private boolean introspectionQueryDetected = false;
 
@@ -1094,7 +1093,6 @@ public class OperationValidator implements DocumentVisitor {
         maxFieldDepthSeen = 0;
         fragmentTraversalMaxDepth = 0;
         introspectionQueryDetected = false;
-        mergedIntrospectionSelections = null;
         introspectionCounts = null;
     }
 
@@ -1468,7 +1466,6 @@ public class OperationValidator implements DocumentVisitor {
         overlappingFields_collectFields(fieldMap, selectionSet, graphQLOutputType, visitedFragments);
         if (isRuleEnabled(OperationValidationRule.GOOD_FAITH_INTROSPECTION) && containsIntrospection(fieldMap, graphQLOutputType)) {
             introspectionQueryDetected = true;
-            mergedIntrospectionSelections = new HashMap<>();
             introspectionCounts = new HashMap<>();
         }
         List<Conflict> conflicts = findConflicts(fieldMap);
@@ -1545,37 +1542,44 @@ public class OperationValidator implements DocumentVisitor {
 
     private void sameResponseShapeByName(Map<String, Set<FieldAndType>> fieldMap, ImmutableList<String> currentPath, List<Conflict> conflictsResult) {
         for (Map.Entry<String, Set<FieldAndType>> entry : fieldMap.entrySet()) {
-            if (sameResponseShapeChecked.contains(entry.getValue())) {
+            FieldValidationState<FieldAndType> state = fieldValidationStates.computeIfAbsent(entry.getValue(), fields -> new FieldValidationState<>());
+            if (!state.markResponseShapeChecked()) {
                 continue;
             }
             ImmutableList<String> newPath = addToList(currentPath, entry.getKey());
-            sameResponseShapeChecked.add(entry.getValue());
             Conflict conflict = requireSameOutputTypeShape(newPath, entry.getValue());
             if (conflict != null) {
                 conflictsResult.add(conflict);
                 continue;
             }
-            Map<String, Set<FieldAndType>> subSelections = mergeSubSelections(entry.getValue());
+            Map<String, Set<FieldAndType>> subSelections = mergeSubSelections(entry.getValue(), state);
             sameResponseShapeByName(subSelections, newPath, conflictsResult);
         }
     }
 
-    private Map<String, Set<FieldAndType>> mergeSubSelections(Set<FieldAndType> sameNameFields) {
-        if (mergedIntrospectionSelections == null) {
-            return collectSubSelections(sameNameFields);
+    private Map<String, Set<FieldAndType>> mergeSubSelections(Set<FieldAndType> sameNameFields, FieldValidationState<FieldAndType> state) {
+        Map<String, Set<FieldAndType>> subSelections = state.getMergedSubSelections();
+        if (subSelections == null) {
+            subSelections = collectSubSelections(sameNameFields);
+            state.setMergedSubSelections(subSelections);
         }
-        return mergedIntrospectionSelections.computeIfAbsent(sameNameFields, this::collectSubSelections);
+        return subSelections;
     }
 
     private Map<String, Set<FieldAndType>> collectSubSelections(Set<FieldAndType> sameNameFields) {
-        Map<String, Set<FieldAndType>> fieldMap = new LinkedHashMap<>();
+        Map<String, Set<FieldAndType>> fieldMap = null;
         for (FieldAndType fieldAndType : sameNameFields) {
-            if (fieldAndType.field.getSelectionSet() != null) {
-                Set<String> visitedFragments = new LinkedHashSet<>();
-                overlappingFields_collectFields(fieldMap, fieldAndType.field.getSelectionSet(), fieldAndType.graphQLType, visitedFragments);
+            SelectionSet selectionSet = fieldAndType.field.getSelectionSet();
+            if (selectionSet == null) {
+                continue;
             }
+            if (fieldMap == null) {
+                fieldMap = new LinkedHashMap<>();
+            }
+            Set<String> visitedFragments = new LinkedHashSet<>();
+            overlappingFields_collectFields(fieldMap, selectionSet, fieldAndType.graphQLType, visitedFragments);
         }
-        return fieldMap;
+        return fieldMap == null ? Collections.emptyMap() : fieldMap;
     }
 
     private @Nullable GoodFaithIntrospectionCounts sameForCommonParentsByName(Map<String, Set<FieldAndType>> fieldMap,
@@ -1596,7 +1600,8 @@ public class OperationValidator implements DocumentVisitor {
         if (selectionCounts != null && reuseIntrospectionCounts(group, path.size() - 1, selectionCounts)) {
             return;
         }
-        boolean newlyChecked = sameForCommonParentsChecked.add(group);
+        FieldValidationState<FieldAndType> state = fieldValidationStates.computeIfAbsent(group, fields -> new FieldValidationState<>());
+        boolean newlyChecked = state.markSameForCommonParentsChecked();
         if (!newlyChecked && selectionCounts == null) {
             return;
         }
@@ -1614,7 +1619,7 @@ public class OperationValidator implements DocumentVisitor {
             // A null value marks an in-progress group, stopping invalid fragment cycles.
             Assert.assertNotNull(introspectionCounts).put(group, null);
         }
-        Map<String, Set<FieldAndType>> subSelections = mergeSubSelections(group);
+        Map<String, Set<FieldAndType>> subSelections = mergeSubSelections(group, state);
         GoodFaithIntrospectionCounts children = sameForCommonParentsByName(subSelections, path, conflictsResult);
         if (groupCounts != null) {
             groupCounts.addChildren(Assert.assertNotNull(children));

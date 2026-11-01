@@ -300,6 +300,24 @@ class GoodFaithMergedFieldsTest extends Specification {
         249    | false       | true
     }
 
+    def "shared introspection selections are counted separately for each operation"() {
+        given:
+        def query = """
+            query First { ...Root }
+            query Second { ...Root $extra }
+            fragment Root on Query { __schema { types { ...TypeFields } } }
+            fragment TypeFields on __Type { fields { name } }
+        """
+
+        expect:
+        rejected(query) == expected
+
+        where:
+        extra                                       | expected
+        ''                                          | false
+        'alias: __schema { types { ...TypeFields } }' | true
+    }
+
     def "introspection subfields still undergo overlap validation"() {
         expect:
         validate(query).any { it.validationErrorType == ValidationErrorType.FieldsConflict }
