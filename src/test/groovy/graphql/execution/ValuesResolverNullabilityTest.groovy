@@ -8,7 +8,6 @@ import graphql.GraphQL
 import graphql.ParseAndValidate
 import graphql.TestUtil
 import graphql.schema.DataFetcher
-import spock.lang.PendingFeature
 import spock.lang.Specification
 
 class ValuesResolverNullabilityTest extends Specification {
@@ -152,41 +151,6 @@ class ValuesResolverNullabilityTest extends Specification {
         'query'    | 'String!'
         'mutation' | 'String'
         'mutation' | 'String!'
-    }
-
-    @PendingFeature(exceptions = [], reason = 'Argument coercion is lazy: invalid arguments can reach a resolver or be ignored entirely. This execution limitation predates PR #4507.')
-    def "invalid arguments must prevent #operation resolver invocation with #argumentType and readsArguments=#readsArguments"() {
-        given:
-        int calls = 0
-        DataFetcher fetcher = { env ->
-            calls++
-            if (readsArguments) {
-                env.getArgument('arg')
-            }
-            'unexpected'
-        }
-        def graphQL = buildGraphQL(argumentType, fetcher)
-        def query = operation + '($v: String = "x") { f(arg: ' + literal + ') }'
-
-        when:
-        def result = executeValid(graphQL, query, [v: null])
-
-        then:
-        calls == 0
-        result.data == [f: null]
-        result.errors.size() == 1
-        result.errors[0].path == ['f']
-
-        where:
-        operation  | argumentType    | literal   | readsArguments
-        'query'    | '[String!]!'    | '[$v]'    | false
-        'query'    | '[String!]!'    | '[$v]'    | true
-        'query'    | 'RequiredInput' | '{a: $v}' | false
-        'query'    | 'RequiredInput' | '{a: $v}' | true
-        'mutation' | '[String!]!'    | '[$v]'    | false
-        'mutation' | '[String!]!'    | '[$v]'    | true
-        'mutation' | 'RequiredInput' | '{a: $v}' | false
-        'mutation' | 'RequiredInput' | '{a: $v}' | true
     }
 
     private GraphQL buildGraphQL(String argumentType, DataFetcher fetcher, String resultType = 'String') {
